@@ -112,4 +112,4 @@ The runner will snapshot the git tree, run OpenCode, enforce that *only* the dec
 
 ## License
 
-MPL-2.0 or MIT. Created by Tony Rice.
+This project is dedicated to the public domain under the [CC0 1.0 Universal](LICENSE) (CC0 1.0) Public Domain Dedication. You can copy, modify, distribute, and perform the work, even for commercial purposes, all without asking permission.
