@@ -3,14 +3,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Temporary session caches (keep repo clean when testing locally)
-.agents/opencode/sessions/*
-!.agents/opencode/sessions/.gitkeep
-.agents/discovery/*
-!.agents/discovery/.gitkeep
-.agents/workorders/*
-!.agents/workorders/.gitkeep
-
 # System files
 .DS_Store
 Thumbs.db
