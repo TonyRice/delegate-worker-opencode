@@ -66,14 +66,21 @@ Execute the work order via:
 .agents/skills/delegate-worker/scripts/run-subagent.sh build ".agents/workorders/<task-name>.md" [model]
 ```
 
-- **Scope Guard (`validate-workorder-scope.py`):** Automatically snapshots the git working tree prior to subagent execution and enforces that **only** files declared under `## 2. Target Files` were created or modified. Any unauthorized change immediately fails and flags the violation.
+- **Minimal Streaming Logs (Token Guard):** By default, subagent executions are piped through `filter-subagent-stream.py`, discarding raw file dumps and tool payloads to protect your token context.
+- **Output Modes:**
+  - *Default (Silent)*: Emits only the compact Executive Summary upon completion.
+  - *`--progress` (or `PROGRESS=1`)*: Streams lightweight 1-line tool breadcrumbs (`→ [read] file.ts`) without payloads.
+  - *`--verbose` (or `VERBOSE=1`)*: Bypasses filtering for raw debug output.
+- **Safety Catch:** Automatically caps the printed subagent report (default: 5,000 characters) to prevent runaway responses from blowing context. Full untruncated responses are always preserved on disk.
+- **Scope Guard (`validate-workorder-scope.py`):** Snapshots the git tree and enforces that **only** files declared under `## 2. Target Files` were created or modified.
 - **Model Tiers:**
   - Standard workhorse: `opencode-go/deepseek-v4.1-flash` (default)
   - Complex architectural refactors or intricate concurrency/type logic: `opencode-go/deepseek-v4-pro`
 
 ### 5. Phase 4: Review & Verification
-1. Check output: Review the `git diff --stat` and verify the Scope Guard passed.
-2. Confirm the verification test suite passed.
+1. **Review Executive Summary:** Read the `Subagent Report` printed in the terminal summary block. The subagent summarizes its implementation actions and test results directly.
+2. **Verify Scope & Diffs:** Confirm Scope Guard passed and check the compact `git diff --stat`.
+3. **Deep Inspection (If Needed):** Check `.agents/opencode/sessions/<id>.md` or raw `.jsonl` log only if detailed post-mortem debugging is required.
 
 ### 6. Error Escalation Protocol
 If the runner script returns a non-zero exit code or Scope Guard flags an unauthorized file:

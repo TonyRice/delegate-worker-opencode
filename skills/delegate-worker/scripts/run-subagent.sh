@@ -27,7 +27,118 @@ else
   REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 fi
 
+VERSION="0.2.0"
+GITHUB_REPO="TonyRice/delegate-worker-opencode"
+VERSION_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main/VERSION"
+UPDATE_INTERVAL_SECS="${DELEGATE_WORKER_UPDATE_INTERVAL:-86400}" # 24 hours
+
+# Helper: compare semantic versions (returns 0 if $1 < $2)
+version_is_older() {
+  local current="$1"
+  local remote="$2"
+  [ "$current" != "$remote" ] && [ "$(printf '%s\n%s' "$current" "$remote" | sort -V | head -n1)" = "$current" ]
+}
+
+# Helper: check for updates from GitHub (non-blocking, cached, stderr only)
+check_github_update() {
+  local force="${1:-0}"
+  if [ "${DELEGATE_WORKER_NO_UPDATE:-0}" = "1" ] && [ "$force" -ne 1 ]; then
+    return 0
+  fi
+
+  local cache_dir="${HOME}/.cache/delegate-worker"
+  local cache_file="${cache_dir}/last_update_check"
+  local latest_file="${cache_dir}/latest_version"
+  mkdir -p "$cache_dir"
+
+  local now
+  now=$(date +%s)
+
+  # Check cache expiry if not forced
+  if [ "$force" -ne 1 ] && [ -f "$cache_file" ]; then
+    local last_check
+    last_check=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0)
+    if [ $((now - last_check)) -lt "$UPDATE_INTERVAL_SECS" ]; then
+      if [ -f "$latest_file" ]; then
+        local cached_remote
+        cached_remote=$(cat "$latest_file" 2>/dev/null | tr -d '[:space:]')
+        if [ -n "$cached_remote" ] && version_is_older "$VERSION" "$cached_remote"; then
+          echo "[delegate-worker] Update available: v${VERSION} -> v${cached_remote} (https://github.com/${GITHUB_REPO})" >&2
+        fi
+      fi
+      return 0
+    fi
+  fi
+
+  # Update timestamp
+  touch "$cache_file"
+
+  # Non-blocking fetch with short timeout (max 2 seconds)
+  local remote_version
+  remote_version=$(curl -fsSL --max-time 2 "$VERSION_URL" 2>/dev/null | tr -d '[:space:]' || true)
+
+  if [ -n "$remote_version" ]; then
+    echo "$remote_version" > "$latest_file"
+    if version_is_older "$VERSION" "$remote_version"; then
+      echo "[delegate-worker] Update available: v${VERSION} -> v${remote_version} (https://github.com/${GITHUB_REPO})" >&2
+    elif [ "$force" -eq 1 ]; then
+      echo "[delegate-worker] Up to date (v${VERSION})." >&2
+    fi
+  elif [ "$force" -eq 1 ]; then
+    echo "[delegate-worker] Warning: Could not check updates (GitHub unreachable or timed out)." >&2
+  fi
+}
+
 # 2. Argument validation & subcommands
+PROGRESS_FLAG=""
+VERBOSE="${VERBOSE:-0}"
+MAX_CHARS="${SUBAGENT_MAX_CHARS:-5000}"
+
+# Parse optional leading flags
+while [[ "${1:-}" =~ ^- ]]; do
+  case "$1" in
+    --progress)
+      PROGRESS_FLAG="--progress"
+      shift
+      ;;
+    --verbose|-v)
+      VERBOSE=1
+      shift
+      ;;
+    --max-chars)
+      MAX_CHARS="${2:-5000}"
+      shift 2
+      ;;
+    -V|--version)
+      echo "delegate-worker v${VERSION}"
+      exit 0
+      ;;
+    --check-update)
+      check_github_update 1
+      exit 0
+      ;;
+    --no-update-check)
+      DELEGATE_WORKER_NO_UPDATE=1
+      shift
+      ;;
+    -h|--help)
+      echo "Usage: $0 [--progress] [--verbose] [--max-chars N] [--no-update-check] <discover|build|continue|init|check-update|version> <input> [model|prompt]"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [ "${PROGRESS:-0}" = "1" ]; then
+  PROGRESS_FLAG="--progress"
+fi
+
+# Run background update check (cached 24h, non-blocking)
+check_github_update 0
+
 MODE="${1:-}"
 
 if [ "$MODE" = "init" ]; then
@@ -65,11 +176,21 @@ EOF
   exit 0
 fi
 
+if [ "$MODE" = "version" ]; then
+  echo "delegate-worker v${VERSION}"
+  exit 0
+fi
+
+if [ "$MODE" = "check-update" ]; then
+  check_github_update 1
+  exit 0
+fi
+
 INPUT="${2:-}"
 MODEL="${3:-opencode-go/deepseek-v4.1-flash}"
 
 if [ -z "$MODE" ] || [ -z "$INPUT" ]; then
-  echo "Usage: $0 <discover|build|continue|init> <\"prompt\"|path/to/workorder.md|session_id> [model|prompt]" >&2
+  echo "Usage: $0 [--progress] [--verbose] [--no-update-check] <discover|build|continue|init|check-update|version> <input> [model|prompt]" >&2
   exit 1
 fi
 
@@ -87,6 +208,43 @@ archive_session() {
   fi
 }
 
+# Helper: execute OpenCode via filter wrapper
+execute_subagent() {
+  local agent_name="$1"
+  local session_id="$2"
+  local payload="$3"
+  local model="$4"
+  local tmode="$5"
+
+  local archive_dir="${REPO_ROOT}/.agents/opencode/sessions"
+  mkdir -p "$archive_dir"
+
+  local agent_arg=()
+  if [ -n "$agent_name" ]; then
+    agent_arg=(--agent "$agent_name")
+  fi
+
+  if [ "$VERBOSE" = "1" ]; then
+    echo "==> Spawning OpenCode Subagent ($model) [Session: $session_id] (VERBOSE)..."
+    opencode run "${agent_arg[@]}" --auto --session "$session_id" "$payload" --model "$model"
+  else
+    local filter_args=(
+      --session "$session_id"
+      --mode "$tmode"
+      --model "$model"
+      --max-chars "$MAX_CHARS"
+      --archive-dir "$archive_dir"
+    )
+    if [ -n "$PROGRESS_FLAG" ]; then
+      filter_args+=("$PROGRESS_FLAG")
+    fi
+
+    echo "==> Spawning OpenCode Subagent ($model) [Session: $session_id]..." >&2
+    opencode run "${agent_arg[@]}" --auto --session "$session_id" "$payload" --model "$model" --format json \
+      | python3 "${SCRIPT_DIR}/filter-subagent-stream.py" "${filter_args[@]}"
+  fi
+}
+
 case "$MODE" in
   discover|explore|plan)
     SESSION_ID="$(gen_session_id)"
@@ -96,8 +254,7 @@ case "$MODE" in
       TASK_PAYLOAD="$INPUT"
     fi
 
-    echo "==> Spawning OpenCode Discovery Subagent ($MODEL) [Session: $SESSION_ID]..."
-    if ! opencode run --agent plan --auto --session "$SESSION_ID" "$TASK_PAYLOAD" --model "$MODEL"; then
+    if ! execute_subagent "plan" "$SESSION_ID" "$TASK_PAYLOAD" "$MODEL" "discover"; then
       echo "Error: OpenCode discovery subagent failed." >&2
       archive_session "$SESSION_ID" "discover"
       exit 1
@@ -119,9 +276,8 @@ case "$MODE" in
     PRE_STATUS_FILE=$(mktemp)
     git status --porcelain > "$PRE_STATUS_FILE"
 
-    echo "==> Spawning OpenCode Builder Subagent ($MODEL) [Session: $SESSION_ID]..."
     BUILD_EXIT_CODE=0
-    if ! opencode run --agent build --auto --session "$SESSION_ID" "$TASK_PAYLOAD" --model "$MODEL"; then
+    if ! execute_subagent "build" "$SESSION_ID" "$TASK_PAYLOAD" "$MODEL" "build"; then
       BUILD_EXIT_CODE=$?
       echo "Error: OpenCode builder subagent failed with code $BUILD_EXIT_CODE." >&2
     fi
@@ -139,7 +295,7 @@ case "$MODE" in
     fi
 
     echo ""
-    echo "==> Subagent finished. Working tree diff:"
+    echo "==> Working tree diff:"
     git diff --stat
     ;;
 
@@ -147,13 +303,12 @@ case "$MODE" in
     SESSION_ID="$INPUT"
     FOLLOWUP_PROMPT="${3:-}"
     if [ -z "$FOLLOWUP_PROMPT" ]; then
-      echo "Usage: $0 continue <session_id> \"<follow-up instruction>\" [model]" >&2
+      echo "Usage: $0 [--progress] [--verbose] continue <session_id> \"<follow-up instruction>\" [model]" >&2
       exit 1
     fi
     TARGET_MODEL="${4:-opencode-go/deepseek-v4.1-flash}"
 
-    echo "==> Continuing OpenCode Session: $SESSION_ID ($TARGET_MODEL)..."
-    if ! opencode run --auto --session "$SESSION_ID" "$FOLLOWUP_PROMPT" --model "$TARGET_MODEL"; then
+    if ! execute_subagent "" "$SESSION_ID" "$FOLLOWUP_PROMPT" "$TARGET_MODEL" "continue"; then
       echo "Error: Follow-up command failed in session $SESSION_ID." >&2
       archive_session "$SESSION_ID" "continue"
       exit 1
@@ -161,8 +316,18 @@ case "$MODE" in
     archive_session "$SESSION_ID" "continue"
     ;;
 
+  version)
+    echo "delegate-worker v${VERSION}"
+    exit 0
+    ;;
+
+  check-update)
+    check_github_update 1
+    exit 0
+    ;;
+
   *)
-    echo "Error: Unknown mode '$MODE'. Use 'discover', 'build', 'continue', or 'init'." >&2
+    echo "Error: Unknown mode '$MODE'. Use 'discover', 'build', 'continue', 'init', 'check-update', or 'version'." >&2
     exit 1
     ;;
 esac

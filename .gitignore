@@ -6,3 +6,7 @@ __pycache__/
 # System files
 .DS_Store
 Thumbs.db
+
+# Runtime subagent artifacts
+.agents/
+

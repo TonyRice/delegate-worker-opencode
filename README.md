@@ -9,6 +9,7 @@ Protect your main chat token context and budget runway by offloading repetitive 
 ## Architecture & Features
 
 - 🛡️ **Scope Guard (`validate-workorder-scope.py`)**: Strict pre/post git tree validation guaranteeing that subagents only touch files explicitly authorized in the work order.
+- ⚡ **Token Guard (`filter-subagent-stream.py`)**: Real-time streaming JSON filter that suppresses verbose tool dumps, protects context windows with a safety length cap, and emits a structured Executive Summary.
 - 🔍 **Discovery Mode (`discover`)**: Offloads code exploration, call hierarchy tracing, and architectural queries into isolated subagent sessions without polluting main context.
 - 📦 **Structured Work Orders (`init` / `build`)**: Enforces clean contracts, target files, behavioral invariants, and verification commands.
 - 📝 **Automatic Session Archival (`archive-subagent-session.py`)**: Exports full session transcripts, costs, token usage, tool calls, and findings into markdown summaries.
@@ -28,6 +29,7 @@ delegate-worker-opencode/
 │       ├── SKILL.md                         # Protocol definition and activation
 │       └── scripts/
 │           ├── run-subagent.sh              # Unified CLI wrapper
+│           ├── filter-subagent-stream.py    # Streaming JSON filter & token guard
 │           ├── validate-workorder-scope.py  # Git working tree scope guard
 │           └── archive-subagent-session.py  # Session transcript and metrics exporter
 ├── bin/
@@ -60,11 +62,12 @@ git clone git@github.com:TonyRice/delegate-worker-opencode.git /tmp/delegate-wor
 git submodule add git@github.com:TonyRice/delegate-worker-opencode.git .agents/plugins/delegate-worker
 ```
 
-### Option 3: Global Antigravity Customization
-To make the skill and agent available across all projects on your machine:
+### Option 3: Global Antigravity CLI Installation
+To install the skill globally across all projects on your machine (installs into `~/.gemini/antigravity-cli/skills/` by default):
 ```bash
-./bin/install.sh ~/.gemini/config
+./install.sh
 ```
+
 
 ---
 
@@ -106,7 +109,13 @@ Dispatch the task to OpenCode:
 ```bash
 .agents/skills/delegate-worker/scripts/run-subagent.sh build .agents/workorders/add-auth-middleware.md
 ```
-The runner will snapshot the git tree, run OpenCode, enforce that *only* the declared target files were modified, and report any scope violations before presenting the diff.
+The runner pipes OpenCode through the Token Guard filter (`filter-subagent-stream.py`), suppressing intermediate tool noise, enforcing the 5,000-character safety cap, and presenting a structured Executive Summary alongside Scope Guard validation and git diff statistics.
+
+#### Execution Flags & Options
+- **Default (Silent)**: Zero live output while running; prints only the final Executive Summary.
+- **`--progress` (or `PROGRESS=1`)**: Streams single-line tool breadcrumbs (`→ [read] src/file.ts`) without tool outputs.
+- **`--verbose` (or `VERBOSE=1`)**: Bypasses filtering and streams full raw logs.
+- **`--max-chars <N>`**: Customizes the safety response length limit (default: `5000` chars).
 
 ---
 

@@ -1,4 +1,5 @@
 {
   "name": "delegate-worker-opencode",
+  "version": "0.2.0",
   "description": "Headless OpenCode delegation protocol, orchestrator agent, and scope guard tools for Antigravity & AI agents."
 }
