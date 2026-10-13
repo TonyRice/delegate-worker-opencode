@@ -20,8 +20,13 @@ else
 fi
 
 # Locate repository root (supports local run or curl | bash piping)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-}")" 2>/dev/null && pwd || echo "")"
+if [ "${#BASH_SOURCE[@]}" -gt 0 ]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+else
+  SCRIPT_DIR=""
+fi
 CLEANUP_TMP=""
+
 
 if [ -n "$SCRIPT_DIR" ] && [ -d "${SCRIPT_DIR}/skills" ]; then
   REPO_ROOT="${SCRIPT_DIR}"
