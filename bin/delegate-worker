@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# delegate-worker: CLI tool to manage, update, and run OpenCode delegate-worker
+GLOBAL_SKILL_DIR="${HOME}/.gemini/antigravity-cli/skills/delegate-worker"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Helper: locate canonical run-subagent.sh
+resolve_runner() {
+  if [ -x "${GLOBAL_SKILL_DIR}/scripts/run-subagent.sh" ]; then
+    echo "${GLOBAL_SKILL_DIR}/scripts/run-subagent.sh"
+  elif [ -x "${SCRIPT_DIR}/skills/delegate-worker/scripts/run-subagent.sh" ]; then
+    echo "${SCRIPT_DIR}/skills/delegate-worker/scripts/run-subagent.sh"
+  elif command -v run-subagent.sh >/dev/null 2>&1; then
+    command -v run-subagent.sh
+  else
+    echo ""
+  fi
+}
+
+# Helper: get version of an installation directory
+get_version_of() {
+  local target_dir="$1"
+  local runner="$target_dir/scripts/run-subagent.sh"
+  if [ -f "$runner" ]; then
+    local v
+    v=$(grep -m1 '^VERSION=' "$runner" 2>/dev/null | cut -d'"' -f2 || echo "")
+    if [ -n "$v" ]; then
+      echo "v${v}"
+    else
+      echo "v0.1.0-legacy"
+    fi
+  else
+    echo "not installed"
+  fi
+}
+
+# Helper: setup .bashrc with timestamped backup
+setup_bashrc() {
+  local bashrc="${HOME}/.bashrc"
+  local backup="${HOME}/.bashrc.bak_$(date +%Y%m%d_%H%M%S)"
+
+  if [ ! -f "$bashrc" ]; then
+    touch "$bashrc"
+  fi
+
+  cp "$bashrc" "$backup"
+  echo "==> Backed up ~/.bashrc to: ${backup}"
+
+  # Ensure ~/.local/bin is in PATH and alias is defined
+  local marker="# delegate-worker-opencode CLI"
+  if grep -q "$marker" "$bashrc"; then
+    echo "==> ~/.bashrc already configured for delegate-worker."
+  else
+    cat << 'EOF' >> "$bashrc"
+
+# delegate-worker-opencode CLI
+export PATH="$HOME/.local/bin:$PATH"
+alias delegate-worker="$HOME/.local/bin/delegate-worker"
+EOF
+    echo "==> Added delegate-worker to ~/.bashrc"
+    echo "==> Run: 'source ~/.bashrc' or open a new terminal to use anywhere."
+  fi
+}
+
+# Subcommand: check / status
+cmd_status() {
+  local target_path="${1:-}"
+
+  echo "================================================================="
+  echo " DELEGATE-WORKER INSTALLATION STATUS"
+  echo "================================================================="
+
+  # 1. Global installation
+  local global_ver
+  global_ver=$(get_version_of "$GLOBAL_SKILL_DIR")
+  echo "• Global Skill:  ${GLOBAL_SKILL_DIR}"
+  echo "  Status:        ${global_ver}"
+
+  # 2. Project target check
+  if [ -n "$target_path" ]; then
+    # Expand tilde
+    target_path="${target_path/#\~/$HOME}"
+    local project_skill=""
+    if [ -d "$target_path/.agents/skills/delegate-worker" ]; then
+      project_skill="$target_path/.agents/skills/delegate-worker"
+    elif [ -d "$target_path/skills/delegate-worker" ]; then
+      project_skill="$target_path/skills/delegate-worker"
+    fi
+
+    echo ""
+    echo "• Target Path:   ${target_path}"
+    if [ -n "$project_skill" ]; then
+      local proj_ver
+      proj_ver=$(get_version_of "$project_skill")
+      echo "  Local Copy:    ${project_skill}"
+      echo "  Version:       ${proj_ver}"
+      echo ""
+      if [ "$global_ver" != "not installed" ]; then
+        echo "  [Recommendation]"
+        echo "  - To remove local copy & rely on global:  delegate-worker clean ${target_path}"
+        echo "  - To update local copy in-place:          delegate-worker update ${target_path}"
+      fi
+    else
+      echo "  Local Copy:    None found."
+      if [ "$global_ver" != "not installed" ]; then
+        echo "  Project will automatically use the global installation."
+      fi
+    fi
+  fi
+  echo "================================================================="
+}
+
+# Subcommand: clean / remove local project copy
+cmd_clean() {
+  local target_path="${1:-}"
+  if [ -z "$target_path" ]; then
+    echo "Usage: delegate-worker clean <path-to-project>" >&2
+    exit 1
+  fi
+
+  target_path="${target_path/#\~/$HOME}"
+  local removed=0
+
+  if [ -d "$target_path/.agents/skills/delegate-worker" ]; then
+    rm -rf "$target_path/.agents/skills/delegate-worker"
+    echo "==> Removed: ${target_path}/.agents/skills/delegate-worker"
+    removed=1
+  fi
+
+  if [ -d "$target_path/.agents/agents/delegate-worker" ]; then
+    rm -rf "$target_path/.agents/agents/delegate-worker"
+    echo "==> Removed: ${target_path}/.agents/agents/delegate-worker"
+    removed=1
+  fi
+
+  if [ "$removed" -eq 1 ]; then
+    echo "==> Local installation successfully removed from ${target_path}!"
+    echo "==> Antigravity will now seamlessly use the global installation:"
+    echo "    ${GLOBAL_SKILL_DIR}/SKILL.md"
+  else
+    echo "No local delegate-worker installation found in ${target_path}."
+  fi
+}
+
+# Subcommand: update
+cmd_update() {
+  local target_path="${1:-}"
+
+  if [ -n "$target_path" ] && [ "$target_path" != "--global" ]; then
+    target_path="${target_path/#\~/$HOME}"
+    echo "==> Updating delegate-worker in project: ${target_path}..."
+    local dest="${target_path}/.agents/skills/delegate-worker"
+    mkdir -p "$dest"
+
+    if [ -d "${GLOBAL_SKILL_DIR}" ]; then
+      cp -R "${GLOBAL_SKILL_DIR}/." "$dest/"
+      if [ -d "$dest/scripts" ]; then
+        chmod +x "$dest/scripts/"*
+      fi
+      echo "==> Successfully updated ${dest} to $(get_version_of "$dest")!"
+    elif [ -d "${SCRIPT_DIR}/skills/delegate-worker" ]; then
+      cp -R "${SCRIPT_DIR}/skills/delegate-worker/." "$dest/"
+      if [ -d "$dest/scripts" ]; then
+        chmod +x "$dest/scripts/"*
+      fi
+      echo "==> Successfully updated ${dest} to $(get_version_of "$dest")!"
+    else
+      echo "Error: Source skill files not found in ${GLOBAL_SKILL_DIR} or ${SCRIPT_DIR}." >&2
+      exit 1
+    fi
+  else
+    echo "==> Updating global delegate-worker installation from GitHub..."
+    curl -fsSL https://raw.githubusercontent.com/TonyRice/delegate-worker-opencode/main/install.sh | bash
+  fi
+}
+
+# Main command dispatch
+ACTION="${1:-}"
+
+case "$ACTION" in
+  status|check)
+    shift
+    cmd_status "${1:-}"
+    ;;
+  clean|remove|uninstall)
+    shift
+    cmd_clean "${1:-}"
+    ;;
+  update|upgrade)
+    shift
+    cmd_update "${1:-}"
+    ;;
+  setup-bashrc)
+    setup_bashrc
+    ;;
+  help|-h|--help)
+    echo "Usage: delegate-worker <command> [arguments]"
+    echo ""
+    echo "Management Commands:"
+    echo "  status [path]        Check global and project installation versions"
+    echo "  clean <path>         Remove local project copy to use global installation"
+    echo "  update [path]        Update local project copy or global installation in place"
+    echo "  setup-bashrc         Add delegate-worker to ~/.bashrc with automated backup"
+    echo ""
+    echo "Worker Subcommands (proxied to run-subagent.sh):"
+    echo "  discover <query>     Run OpenCode in context-isolated discovery mode"
+    echo "  build <workorder>    Execute work order with strict Scope Guard enforcement"
+    echo "  init <slug>          Generate a structured work order skeleton"
+    echo "  continue <id> <msg>  Continue an existing OpenCode subagent session"
+    echo "  version              Show current version"
+    echo "  check-update         Query GitHub for remote updates"
+    exit 0
+    ;;
+  *)
+    RUNNER="$(resolve_runner)"
+    if [ -n "$RUNNER" ] && [ -x "$RUNNER" ]; then
+      exec "$RUNNER" "$@"
+    else
+      echo "Error: run-subagent.sh could not be found globally or locally." >&2
+      echo "Please run './install.sh' to install delegate-worker." >&2
+      exit 1
+    fi
+    ;;
+esac

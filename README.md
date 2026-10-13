@@ -50,24 +50,52 @@ delegate-worker-opencode/
 
 ## Installation
 
-### Option 1: Copy into your project's `.agents/` directory
-From your project's root:
+### One-Line Quick Install (Global & CLI)
+Installs the global Antigravity skill, configures the `delegate-worker` CLI in `~/.local/bin`, and safely updates `~/.bashrc` (with an automated timestamped backup):
+
 ```bash
-git clone git@github.com:TonyRice/delegate-worker-opencode.git /tmp/delegate-worker
-/tmp/delegate-worker/bin/install.sh .agents
+curl -fsSL https://raw.githubusercontent.com/TonyRice/delegate-worker-opencode/main/install.sh | bash
 ```
 
-### Option 2: Add as a Git Submodule
-```bash
-git submodule add git@github.com:TonyRice/delegate-worker-opencode.git .agents/plugins/delegate-worker
-```
-
-### Option 3: Global Antigravity CLI Installation
-To install the skill globally across all projects on your machine (installs into `~/.gemini/antigravity-cli/skills/` by default):
+### Local Repository Install
+If you have cloned this repository locally:
 ```bash
 ./install.sh
 ```
 
+### Option 2: Project-Specific Installation
+To install into a specific project repository's `.agents/` directory:
+```bash
+./install.sh /path/to/project/.agents
+```
+
+### Option 3: Git Submodule
+```bash
+git submodule add git@github.com:TonyRice/delegate-worker-opencode.git .agents/plugins/delegate-worker
+```
+
+---
+
+## Installation Management & Upgrades
+
+Manage installations across your workstation using the `delegate-worker` CLI:
+
+```bash
+# Check global and project installation versions
+delegate-worker status ~/src/my-project
+
+# Remove a legacy project-local copy to rely cleanly on the global skill
+delegate-worker clean ~/src/my-project
+
+# Update a project-local copy in place
+delegate-worker update ~/src/my-project
+
+# Update the global installation
+delegate-worker update
+
+# Ensure CLI is configured in ~/.bashrc (with automatic timestamped backup)
+delegate-worker setup-bashrc
+```
 
 ---
 

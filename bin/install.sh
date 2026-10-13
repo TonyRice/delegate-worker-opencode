@@ -19,16 +19,28 @@ else
   AGENT_DIR=""
 fi
 
-# Locate repository root
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -d "${SCRIPT_DIR}/skills" ]; then
+# Locate repository root (supports local run or curl | bash piping)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+CLEANUP_TMP=""
+
+if [ -n "$SCRIPT_DIR" ] && [ -d "${SCRIPT_DIR}/skills" ]; then
   REPO_ROOT="${SCRIPT_DIR}"
-elif [ -d "${SCRIPT_DIR}/../skills" ]; then
+elif [ -n "$SCRIPT_DIR" ] && [ -d "${SCRIPT_DIR}/../skills" ]; then
   REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 else
-  echo "Error: Could not locate skills directory." >&2
-  exit 1
+  # Running via curl | bash
+  echo "==> Fetching delegate-worker-opencode from GitHub..."
+  CLEANUP_TMP=$(mktemp -d)
+  git clone --depth 1 https://github.com/TonyRice/delegate-worker-opencode.git "$CLEANUP_TMP" >/dev/null 2>&1
+  REPO_ROOT="$CLEANUP_TMP"
 fi
+
+cleanup() {
+  if [ -n "$CLEANUP_TMP" ] && [ -d "$CLEANUP_TMP" ]; then
+    rm -rf "$CLEANUP_TMP"
+  fi
+}
+trap cleanup EXIT
 
 SKILLS_SRC="${REPO_ROOT}/skills"
 SKILL_FILTER="${2:-}"
@@ -76,4 +88,29 @@ if [ "$installed_count" -eq 0 ]; then
   exit 1
 fi
 
-echo "==> Successfully installed ${installed_count} skill(s)!"
+# Install delegate-worker CLI tool to ~/.local/bin
+if [ -f "${REPO_ROOT}/bin/delegate-worker" ]; then
+  mkdir -p "${HOME}/.local/bin"
+  cp "${REPO_ROOT}/bin/delegate-worker" "${HOME}/.local/bin/delegate-worker"
+  chmod +x "${HOME}/.local/bin/delegate-worker"
+  echo "    - CLI:     ${HOME}/.local/bin/delegate-worker"
+fi
+
+# Configure ~/.bashrc with automated timestamped backup
+BASHRC="${HOME}/.bashrc"
+if [ -f "$BASHRC" ]; then
+  if ! grep -q "delegate-worker-opencode" "$BASHRC"; then
+    BACKUP="${HOME}/.bashrc.bak_$(date +%Y%m%d_%H%M%S)"
+    cp "$BASHRC" "$BACKUP"
+    echo "==> Backed up ~/.bashrc to: ${BACKUP}"
+    cat << 'EOF' >> "$BASHRC"
+
+# delegate-worker-opencode CLI
+export PATH="$HOME/.local/bin:$PATH"
+alias delegate-worker="$HOME/.local/bin/delegate-worker"
+EOF
+    echo "==> Configured ~/.bashrc for delegate-worker"
+  fi
+fi
+
+echo "==> Successfully installed ${installed_count} skill(s) and CLI!"
